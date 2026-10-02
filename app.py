@@ -16,7 +16,7 @@ from tracker import progress as prog
 from tracker import routine as rt
 from tracker.config import WEIGHT_UNIT
 
-st.set_page_config(page_title="Workout Tracker", page_icon="🏋️", layout="centered")
+st.set_page_config(page_title="DayOne", page_icon="1️⃣", layout="centered")
 
 # Loaded fresh on every rerun, so newly added exercises show up immediately.
 LIBRARY = ex.load_exercises()
