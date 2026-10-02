@@ -400,7 +400,7 @@ def render_progress_tab():
 # Page layout: three tabs
 # ===========================================================================
 
-st.title("🏋️ Workout Tracker")
+st.title("1️⃣ DayOne")
 tab_workout, tab_routine, tab_progress = st.tabs(["🏋️ Workout", "📅 Routine", "📈 Progress"])
 
 with tab_workout:
