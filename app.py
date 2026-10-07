@@ -7,6 +7,8 @@ version, so both interfaces always show the same routine and progress.
 """
 
 from datetime import date
+import uuid
+from functools import wraps
 
 import pandas as pd
 import streamlit as st
@@ -14,13 +16,71 @@ import streamlit as st
 from tracker import exercises as ex
 from tracker import progress as prog
 from tracker import routine as rt
+from tracker import database as db
+from tracker import migration
 from tracker.config import WEIGHT_UNIT
 
 st.set_page_config(page_title="DayOne", page_icon="1️⃣", layout="centered")
 
-# Loaded fresh on every rerun, so newly added exercises show up immediately.
-LIBRARY = ex.load_exercises()
-MUSCLE = {e["name"]: e["muscle_group"] for e in LIBRARY}
+def database_callback(function):
+    """Turn callback failures into visible messages without losing app state."""
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except Exception as exc:
+            st.session_state["database_error"] = str(exc)
+    return wrapped
+
+
+st.title("1️⃣ DayOne")
+if not st.session_state.get("_supabase_user"):
+    st.subheader("Sign in to your workout tracker")
+    st.caption("Your account keeps your routines and tracking history private and synced across devices.")
+    with st.form("auth_form"):
+        auth_email = st.text_input("Email")
+        auth_password = st.text_input("Password", type="password")
+        auth_action = st.form_submit_button("Sign in", type="primary", use_container_width=True)
+    signup_action = st.button("Create account", use_container_width=True)
+    if auth_action or signup_action:
+        try:
+            if signup_action:
+                response = db.sign_up(auth_email, auth_password)
+                if not response.session:
+                    st.info("Account created. Check your email to confirm it, then sign in.")
+                    st.stop()
+            else:
+                db.sign_in(auth_email, auth_password)
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+    st.stop()
+
+try:
+    LIBRARY = ex.load_exercises()
+    MUSCLE = {e["name"]: e["muscle_group"] for e in LIBRARY}
+except Exception as exc:
+    st.error(f"Could not load your workout data. {exc}")
+    st.stop()
+
+with st.sidebar:
+    st.caption(f"Signed in as {st.session_state['_supabase_user'].get('email', '')}")
+    if st.button("Sign out"):
+        db.sign_out()
+        st.rerun()
+    if st.button("Import existing local data"):
+        try:
+            summary = migration.migrate_legacy_data()
+            st.success("Import complete: " + ", ".join(f"{count} {name.replace('_', ' ')}" for name, count in summary.items() if count))
+            if not any(summary.values()):
+                st.info("No new local data needed importing. Existing data files are kept unchanged.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Import failed. Your local files were not changed. {exc}")
+
+database_error = st.session_state.pop("database_error", None)
+if database_error:
+    st.error(f"Database operation failed. Please retry. {database_error}")
 
 
 def exercise_label(name):
@@ -100,9 +160,14 @@ def render_workout_tab():
         if not entries:
             st.warning("Nothing to log - every exercise was set to 0 sets.")
         else:
-            prog.log_session(day, entries)
-            total = sum(e["sets"] for e in entries)
-            st.success(f"Session saved: {len(entries)} exercises, {total} sets. Nice work! 💪")
+            request_key = st.session_state.setdefault(f"session_request_{day}", str(uuid.uuid4()))
+            try:
+                prog.log_session(day, entries, request_key=request_key)
+                st.session_state[f"session_request_{day}"] = str(uuid.uuid4())
+                total = sum(e["sets"] for e in entries)
+                st.success(f"Session saved: {len(entries)} exercises, {total} sets. Nice work! 💪")
+            except Exception as exc:
+                st.error(f"Your session could not be saved. Please retry. {exc}")
 
 
 # ===========================================================================
@@ -111,6 +176,7 @@ def render_workout_tab():
 # Edits use on_click callbacks: they run *before* the page redraws, so the
 # screen always reflects what was just saved.
 
+@database_callback
 def cb_save_name(day):
     routine = rt.load_routine()
     name = st.session_state[f"name_{day}"].strip() or "Workout"
@@ -119,6 +185,7 @@ def cb_save_name(day):
     rt.save_routine(routine)
 
 
+@database_callback
 def cb_add_exercise(day):
     routine = rt.load_routine()
     plan = routine[day]
@@ -135,6 +202,7 @@ def cb_add_exercise(day):
     rt.save_routine(routine)
 
 
+@database_callback
 def cb_remove_exercise(day, index):
     routine = rt.load_routine()
     plan = routine[day]
@@ -146,6 +214,7 @@ def cb_remove_exercise(day, index):
     rt.save_routine(routine)
 
 
+@database_callback
 def cb_clear_day(day):
     routine = rt.load_routine()
     routine[day] = rt.empty_day()
@@ -153,6 +222,7 @@ def cb_clear_day(day):
     rt.save_routine(routine)
 
 
+@database_callback
 def cb_add_library_exercise():
     name = st.session_state["lib_name"].strip()
     choice = st.session_state["lib_group"]
@@ -245,6 +315,7 @@ def render_routine_tab():
 # TAB 3 - PROGRESS
 # ===========================================================================
 
+@database_callback
 def cb_log_weight():
     prog.log_body_weight(
         float(st.session_state["weight_input"]),
@@ -253,6 +324,7 @@ def cb_log_weight():
     st.toast("Weight saved", icon="⚖️")
 
 
+@database_callback
 def cb_log_calories():
     prog.log_calories(
         int(st.session_state["calories_input"]),
@@ -261,11 +333,13 @@ def cb_log_calories():
     st.toast("Calories saved", icon="🔥")
 
 
+@database_callback
 def cb_set_height():
     prog.set_height(float(st.session_state["height_input"]))
     st.toast("Height saved", icon="📏")
 
 
+@database_callback
 def cb_set_favorite():
     choice = st.session_state.get("favorite_input")
     if choice:
@@ -400,12 +474,14 @@ def render_progress_tab():
 # Page layout: three tabs
 # ===========================================================================
 
-st.title("1️⃣ DayOne")
 tab_workout, tab_routine, tab_progress = st.tabs(["🏋️ Workout", "📅 Routine", "📈 Progress"])
 
-with tab_workout:
-    render_workout_tab()
-with tab_routine:
-    render_routine_tab()
-with tab_progress:
-    render_progress_tab()
+try:
+    with tab_workout:
+        render_workout_tab()
+    with tab_routine:
+        render_routine_tab()
+    with tab_progress:
+        render_progress_tab()
+except Exception as exc:
+    st.error(f"Could not load or update your workout data. {exc}")

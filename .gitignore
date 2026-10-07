@@ -1,0 +1,15 @@
+# Local environment secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Streamlit local secrets
+.streamlit/secrets.toml
+
+# Local runtime data stays in the repo as a migration backup; do not ignore it.

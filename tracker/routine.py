@@ -11,7 +11,7 @@ Format:
 
 from datetime import date
 
-from .storage import load_json, save_json
+from . import database
 
 ROUTINE_FILE = "routine.json"
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -27,7 +27,7 @@ def today_name():
 
 def load_routine():
     """Return a routine dict that always contains all seven days."""
-    data = load_json(ROUTINE_FILE, {})
+    data = database.load_routine()
     if not isinstance(data, dict):
         data = {}
     routine = {}
@@ -42,7 +42,23 @@ def load_routine():
 
 
 def save_routine(routine):
-    save_json(ROUTINE_FILE, routine)
+    database.save_routine(routine)
+
+
+def get_workout(day):
+    return database.get_workout(day)
+
+
+def delete_workout(day):
+    database.delete_workout(day)
+
+
+def update_workout(day, plan):
+    routine = load_routine()
+    if day not in DAYS:
+        raise ValueError(f"Unknown workout day: {day}")
+    routine[day] = plan
+    save_routine(routine)
 
 
 def is_rest_day(plan):
