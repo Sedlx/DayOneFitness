@@ -18,6 +18,7 @@ from tracker import progress as prog
 from tracker import routine as rt
 from tracker import database as db
 from tracker import migration
+from tracker import streaks
 from tracker.config import WEIGHT_UNIT
 
 st.set_page_config(page_title="DayOne", page_icon="1️⃣", layout="centered")
@@ -65,9 +66,6 @@ except Exception as exc:
 
 with st.sidebar:
     st.caption(f"Signed in as {st.session_state['_supabase_user'].get('email', '')}")
-    if st.button("Refresh data"):
-        db.clear_cache()
-        st.rerun()
     if st.button("Sign out"):
         db.sign_out()
         st.rerun()
@@ -88,6 +86,38 @@ if database_error:
 
 def exercise_label(name):
     return f"{name} · {MUSCLE.get(name, 'Other')}"
+
+
+# ===========================================================================
+# STREAK BANNER
+# ===========================================================================
+
+STRIP_ICON = {"done": "✅", "missed": "❌", "todo": "⬜", "rest": "😴"}
+
+
+def render_streak_banner(s):
+    c1, c2, c3 = st.columns(3)
+    c1.metric("🔥 Day streak", s["day_streak"])
+    c2.metric("🏆 Week streak", s["week_streak"])
+    c3.metric("This week", f"{s['week_done']}/{s['week_goal']}" if s["week_goal"] else "—")
+
+    if s["week_complete"]:
+        st.success("🎉 Weekly goal complete. Every planned workout is done!")
+    elif s["today_is_workout"] and s["today_done"]:
+        st.success("✅ Today's workout is done.")
+    elif s["today_is_workout"]:
+        st.warning("Today's workout isn't done yet. Keep your streak alive! 🔥")
+    else:
+        st.info("Rest day today. Your streak is safe. 😴")
+
+    cols = st.columns(7)
+    for col, item in zip(cols, s["week_strip"]):
+        label = item["day"][:3] + ("•" if item["is_today"] else "")
+        col.markdown(
+            f"<div style='text-align:center'>{STRIP_ICON[item['status']]}<br>"
+            f"<small>{label}</small></div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ===========================================================================
@@ -116,15 +146,16 @@ def render_workout_tab():
 
     st.subheader(plan["name"])
 
+    all_sessions = prog.get_sessions()
+    before = streaks.compute_streaks(all_sessions, routine)
+    render_streak_banner(before)
+
     logged_today = [
-        s for s in prog.get_sessions()
+        s for s in all_sessions
         if s.get("date") == date.today().isoformat() and s.get("day") == day
     ]
     if logged_today:
         st.info("You've already logged this workout today. Logging again adds another session.")
-
-    # One pass over the (cached) sessions instead of one lookup per exercise.
-    last = prog.last_weights()
 
     with st.form(f"log_form_{day}"):
         inputs = []
@@ -142,7 +173,7 @@ def render_workout_tab():
                 f"Weight ({WEIGHT_UNIT})",
                 0.0,
                 1000.0,
-                float(last.get(name.lower(), 0)),
+                float(prog.last_weight_for(name)),
                 step=2.5,
                 key=f"weight_{key}",
             )
@@ -171,7 +202,14 @@ def render_workout_tab():
                 prog.log_session(day, entries, request_key=request_key)
                 st.session_state[f"session_request_{day}"] = str(uuid.uuid4())
                 total = sum(e["sets"] for e in entries)
+                st.balloons()
                 st.success(f"Session saved: {len(entries)} exercises, {total} sets. Nice work! 💪")
+
+                after = streaks.compute_streaks(prog.get_sessions(), routine)
+                if after["week_complete"] and not before["week_complete"]:
+                    st.success(f"🏆 Week complete! That's a {after['week_streak']}-week streak.")
+                elif after["day_streak"] > before["day_streak"]:
+                    st.toast(f"{after['day_streak']}-day streak! Keep it going!", icon="🔥")
             except Exception as exc:
                 st.error(f"Your session could not be saved. Please retry. {exc}")
 
@@ -180,8 +218,7 @@ def render_workout_tab():
 # TAB 2 - ROUTINE
 # ===========================================================================
 # Edits use on_click callbacks: they run *before* the page redraws, so the
-# screen always reflects what was just saved. Each callback saves only the
-# one day it changed (a single database round trip).
+# screen always reflects what was just saved.
 
 @database_callback
 def cb_save_name(day):
@@ -189,7 +226,7 @@ def cb_save_name(day):
     name = st.session_state[f"name_{day}"].strip() or "Workout"
     routine[day]["name"] = name
     st.session_state[f"name_{day}"] = name
-    rt.save_day(day, routine[day])
+    rt.save_routine(routine)
 
 
 @database_callback
@@ -206,7 +243,7 @@ def cb_add_exercise(day):
     if plan["name"].strip() in ("", "Rest"):
         plan["name"] = (st.session_state.get(f"name_{day}") or "").strip() or "Workout"
         st.session_state[f"name_{day}"] = plan["name"]
-    rt.save_day(day, plan)
+    rt.save_routine(routine)
 
 
 @database_callback
@@ -218,7 +255,7 @@ def cb_remove_exercise(day, index):
     if not plan["exercises"]:
         routine[day] = rt.empty_day()
         st.session_state[f"name_{day}"] = ""
-    rt.save_day(day, routine[day])
+    rt.save_routine(routine)
 
 
 @database_callback
@@ -226,7 +263,7 @@ def cb_clear_day(day):
     routine = rt.load_routine()
     routine[day] = rt.empty_day()
     st.session_state[f"name_{day}"] = ""
-    rt.save_day(day, routine[day])
+    rt.save_routine(routine)
 
 
 @database_callback
@@ -304,7 +341,7 @@ def render_routine_tab():
 
     # ---- grow the exercise library ----
     with st.expander("📚 Add a new exercise to the library"):
-        st.caption("Saved to your account - the built-in list lives in data/exercises.csv.")
+        st.caption("Saved to data/exercises.csv - you can also edit that file directly.")
         groups = ex.muscle_groups()
         with st.form("library_form", clear_on_submit=True):
             st.text_input("Exercise name", key="lib_name")
