@@ -89,6 +89,9 @@ def migrate_legacy_data():
                 client.table("session_exercises").insert(records).execute()
             imported["sessions"] += 1
         database.export_legacy_import(_file_key(progress_path), {})
+
+    # Imports bypass some cache invalidation (direct table inserts), so start fresh.
+    database.clear_cache()
     return imported
 
 

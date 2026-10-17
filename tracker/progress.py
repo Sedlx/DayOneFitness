@@ -72,13 +72,17 @@ def delete_session(session_id):
     database.delete_session(session_id)
 
 
+def last_weights():
+    """{exercise_lower: last weight used}, built in a single pass."""
+    latest = {}
+    for session in get_sessions():  # chronological, so later sessions overwrite earlier ones
+        for entry in session.get("entries", []):
+            latest[entry.get("exercise", "").lower()] = entry.get("weight", 0)
+    return latest
+
+
 def last_weight_for(exercise):
-    wanted = exercise.lower()
-    for session in reversed(get_sessions()):
-        for entry in reversed(session.get("entries", [])):
-            if entry.get("exercise", "").lower() == wanted:
-                return entry.get("weight", 0)
-    return 0
+    return last_weights().get(exercise.lower(), 0)
 
 
 def set_favorite(exercise):

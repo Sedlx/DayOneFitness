@@ -1,4 +1,4 @@
-"""Weekly workout routine, stored in data/routine.json.
+"""Weekly workout routine, stored in Supabase.
 
 Format:
 {
@@ -45,6 +45,13 @@ def save_routine(routine):
     database.save_routine(routine)
 
 
+def save_day(day, plan):
+    """Save a single day (one database round trip)."""
+    if day not in DAYS:
+        raise ValueError(f"Unknown workout day: {day}")
+    database.save_routine_day(day, plan)
+
+
 def get_workout(day):
     return database.get_workout(day)
 
@@ -54,11 +61,7 @@ def delete_workout(day):
 
 
 def update_workout(day, plan):
-    routine = load_routine()
-    if day not in DAYS:
-        raise ValueError(f"Unknown workout day: {day}")
-    routine[day] = plan
-    save_routine(routine)
+    save_day(day, plan)
 
 
 def is_rest_day(plan):

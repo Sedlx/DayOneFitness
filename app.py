@@ -65,6 +65,9 @@ except Exception as exc:
 
 with st.sidebar:
     st.caption(f"Signed in as {st.session_state['_supabase_user'].get('email', '')}")
+    if st.button("Refresh data"):
+        db.clear_cache()
+        st.rerun()
     if st.button("Sign out"):
         db.sign_out()
         st.rerun()
@@ -120,6 +123,9 @@ def render_workout_tab():
     if logged_today:
         st.info("You've already logged this workout today. Logging again adds another session.")
 
+    # One pass over the (cached) sessions instead of one lookup per exercise.
+    last = prog.last_weights()
+
     with st.form(f"log_form_{day}"):
         inputs = []
         for i, item in enumerate(plan["exercises"]):
@@ -136,7 +142,7 @@ def render_workout_tab():
                 f"Weight ({WEIGHT_UNIT})",
                 0.0,
                 1000.0,
-                float(prog.last_weight_for(name)),
+                float(last.get(name.lower(), 0)),
                 step=2.5,
                 key=f"weight_{key}",
             )
@@ -174,7 +180,8 @@ def render_workout_tab():
 # TAB 2 - ROUTINE
 # ===========================================================================
 # Edits use on_click callbacks: they run *before* the page redraws, so the
-# screen always reflects what was just saved.
+# screen always reflects what was just saved. Each callback saves only the
+# one day it changed (a single database round trip).
 
 @database_callback
 def cb_save_name(day):
@@ -182,7 +189,7 @@ def cb_save_name(day):
     name = st.session_state[f"name_{day}"].strip() or "Workout"
     routine[day]["name"] = name
     st.session_state[f"name_{day}"] = name
-    rt.save_routine(routine)
+    rt.save_day(day, routine[day])
 
 
 @database_callback
@@ -199,7 +206,7 @@ def cb_add_exercise(day):
     if plan["name"].strip() in ("", "Rest"):
         plan["name"] = (st.session_state.get(f"name_{day}") or "").strip() or "Workout"
         st.session_state[f"name_{day}"] = plan["name"]
-    rt.save_routine(routine)
+    rt.save_day(day, plan)
 
 
 @database_callback
@@ -211,7 +218,7 @@ def cb_remove_exercise(day, index):
     if not plan["exercises"]:
         routine[day] = rt.empty_day()
         st.session_state[f"name_{day}"] = ""
-    rt.save_routine(routine)
+    rt.save_day(day, routine[day])
 
 
 @database_callback
@@ -219,7 +226,7 @@ def cb_clear_day(day):
     routine = rt.load_routine()
     routine[day] = rt.empty_day()
     st.session_state[f"name_{day}"] = ""
-    rt.save_routine(routine)
+    rt.save_day(day, routine[day])
 
 
 @database_callback
@@ -297,7 +304,7 @@ def render_routine_tab():
 
     # ---- grow the exercise library ----
     with st.expander("📚 Add a new exercise to the library"):
-        st.caption("Saved to data/exercises.csv - you can also edit that file directly.")
+        st.caption("Saved to your account - the built-in list lives in data/exercises.csv.")
         groups = ex.muscle_groups()
         with st.form("library_form", clear_on_submit=True):
             st.text_input("Exercise name", key="lib_name")

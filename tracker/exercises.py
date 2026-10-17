@@ -5,6 +5,7 @@ immediately. Exercises added in the app are stored in Supabase.
 """
 
 import csv
+from functools import lru_cache
 
 from . import database
 from .storage import DATA_DIR
@@ -12,10 +13,7 @@ from .storage import DATA_DIR
 EXERCISE_FILE = DATA_DIR / "exercises.csv"
 
 
-def _load_repository_catalog():
-    if not EXERCISE_FILE.exists():
-        return []
-
+def _read_catalog():
     items = []
     with EXERCISE_FILE.open(newline="", encoding="utf-8-sig") as source:
         for row in csv.DictReader(source):
@@ -34,6 +32,18 @@ def _load_repository_catalog():
             )
 
     return items
+
+
+@lru_cache(maxsize=4)
+def _catalog_for(mtime):
+    # Keyed on the file's modified time, so editing the CSV is picked up at once.
+    return _read_catalog()
+
+
+def _load_repository_catalog():
+    if not EXERCISE_FILE.exists():
+        return []
+    return _catalog_for(EXERCISE_FILE.stat().st_mtime)
 
 
 def load_exercises():
